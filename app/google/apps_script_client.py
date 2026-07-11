@@ -34,6 +34,8 @@ class AppsScriptClient:
     @retryable((httpx.HTTPError,), attempts=3)
     async def call(self, action: str, payload: dict | None = None) -> dict:
         body = {"secret": self._secret, "action": action, "payload": payload or {}}
+        logger.info("Sending Apps Script action '{}' to {}", action, self._url)
+        logger.debug("Apps Script payload keys: {}", list((payload or {}).keys()))
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.post(self._url, json=body)
             response.raise_for_status()
@@ -43,6 +45,9 @@ class AppsScriptClient:
             message = data.get("message", "Unknown error from Apps Script")
             logger.error("Apps Script action '{}' failed: {}", action, message)
             raise AppsScriptError(message)
+
+        logger.info("Apps Script action '{}' succeeded", action)
+        logger.debug("Apps Script response: {}", data)
         return data
 
 

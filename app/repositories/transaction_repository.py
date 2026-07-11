@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date as Date
 
 from app.google.apps_script_client import apps_script_client
+from app.utils.time import current_date
 from app.models.enums import TransactionSource
 from app.schemas.transaction import Transaction, TransactionCreate
 
@@ -55,7 +56,7 @@ class TransactionRepository:
         return [Transaction.from_apps_script_row(r) for r in result.get("transactions", [])]
 
     async def get_today(self, today: Date | None = None) -> list[Transaction]:
-        today = today or Date.today()
+        today = today or current_date()
         return await self.get_transactions(date_from=today, date_to=today)
 
     async def get_month(self, year: int, month: int) -> list[Transaction]:

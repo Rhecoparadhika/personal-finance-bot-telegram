@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from datetime import date as Date
-
+from app.utils.time import current_date
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, Message
@@ -32,7 +31,7 @@ async def cmd_today(message: Message) -> None:
 
 @router.message(Command("month", "summary"))
 async def cmd_month(message: Message) -> None:
-    today = Date.today()
+    today = current_date()
     stats = await summary_service.month_summary(today.year, today.month, days_in_period=today.day)
     text = render_summary(**stats, currency=settings.default_currency, period_label=today.strftime("%B %Y"))
     await message.answer(text, parse_mode="Markdown")
@@ -58,7 +57,7 @@ async def cmd_saldo(message: Message) -> None:
 @router.message(Command("report"))
 async def cmd_report(message: Message) -> None:
     await message.answer("📄 Generating your PDF report, one moment...")
-    today = Date.today()
+    today = current_date()
     pdf_bytes = await generate_monthly_report(today.year, today.month, currency=settings.default_currency)
     filename = f"finbot_report_{today.strftime('%Y_%m')}.pdf"
     await message.answer_document(BufferedInputFile(pdf_bytes, filename=filename), caption="📄 Your monthly report")
@@ -66,7 +65,7 @@ async def cmd_report(message: Message) -> None:
 
 @router.message(Command("chart"))
 async def cmd_chart(message: Message) -> None:
-    today = Date.today()
+    today = current_date()
     txs = await transaction_repository.get_month(today.year, today.month)
     stats = summary_service.summarize(txs, days_in_period=today.day)
 
@@ -88,5 +87,5 @@ async def cmd_export(message: Message) -> None:
         await message.answer("No transactions to export yet.")
         return
     csv_bytes = export_transactions_csv(txs)
-    filename = f"finbot_export_{Date.today().isoformat()}.csv"
+    filename = f"finbot_export_{current_date().isoformat()}.csv"
     await message.answer_document(BufferedInputFile(csv_bytes, filename=filename), caption=f"📤 {len(txs)} transactions exported")

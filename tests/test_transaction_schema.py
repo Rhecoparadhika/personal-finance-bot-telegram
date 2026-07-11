@@ -16,6 +16,12 @@ def test_transaction_create_category_case_insensitive():
     assert tx.category == "Lunch"
 
 
+def test_transaction_create_default_time_is_set():
+    tx = TransactionCreate(date="2026-07-11", type="Expense", category="Lunch", amount=25000)
+    assert tx.time.microsecond == 0
+    assert 0 <= tx.time.hour < 24
+
+
 def test_transaction_create_rejects_unknown_category():
     with pytest.raises(ValidationError):
         TransactionCreate(date="2026-07-11", type="Expense", category="NotARealCategory", amount=1000)

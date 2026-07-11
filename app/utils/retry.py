@@ -3,7 +3,7 @@
 """
 from __future__ import annotations
 
-from loguru import logger
+import logging
 from tenacity import (
     before_sleep_log,
     retry,
@@ -11,6 +11,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def retryable(exceptions: tuple[type[Exception], ...], attempts: int = 3):
@@ -22,5 +24,5 @@ def retryable(exceptions: tuple[type[Exception], ...], attempts: int = 3):
         stop=stop_after_attempt(attempts),
         wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
         retry=retry_if_exception_type(exceptions),
-        before_sleep=before_sleep_log(logger, "WARNING"),  # type: ignore[arg-type]
+        before_sleep=before_sleep_log(logger, "WARNING"),
     )

@@ -14,9 +14,11 @@ from pathlib import Path
 from loguru import logger
 from pydantic import ValidationError
 
+from app.config.settings import settings
 from app.llm.factory import get_llm_provider
 from app.schemas.transaction import LLMParseResult, TransactionCreate
 from app.utils.currency import normalize_amount_text
+from app.utils.time import current_date
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "transaction_parser_system.txt"
 
@@ -34,32 +36,60 @@ def _strip_json_fences(text: str) -> str:
     return text.strip()
 
 
-async def parse_text_to_transactions(raw_text: str, today: Date | None = None) -> LLMParseResult:
-    today = today or Date.today()
+def _build_provider_warning(exc: Exception) -> str:
+    detail = str(exc).strip().lower()
+    provider_name = settings.llm_provider.lower()
+    key_name = {
+        "openai": "OPENAI_API_KEY",
+        "claude": "CLAUDE_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+    }.get(provider_name, "LLM provider API key")
+
+    if any(token in detail for token in ["not configured", "api key", "authentication", "unauthorized", "401", "403", "invalid", "credential"]):
+        return (
+            f"AI service is not configured correctly. Set {key_name} to a real value in .env "
+            f"and restart the app."
+        )
+    return "AI service is temporarily unavailable. Please try again."
+
+
+async def parse_text_to_transactions(
+    raw_text: str,
+    today: Date | None = None,
+    history: list[dict[str, str]] | None = None,
+) -> LLMParseResult:
+    today = today or current_date()
     normalized = normalize_amount_text(raw_text)
     system_prompt = _load_system_prompt(today)
     provider = get_llm_provider()
 
     try:
-        raw_response = await provider.complete_json(system_prompt, normalized)
+        raw_response = await provider.complete_text(system_prompt, normalized, history=history)
     except Exception as exc:  # noqa: BLE001
-        logger.error("LLM provider call failed: {}", exc)
-        return LLMParseResult(transactions=[], warning="AI service is temporarily unavailable. Please try again.")
+        logger.exception("LLM provider call failed")
+        return LLMParseResult(transactions=[], warning=_build_provider_warning(exc))
+
+    transactions: list[TransactionCreate] = []
+    chat_response: str | None = None
+    data = None
 
     try:
         data = json.loads(_strip_json_fences(raw_response))
-    except json.JSONDecodeError as exc:
-        logger.error("LLM returned non-JSON: {} | raw={}", exc, raw_response[:500])
-        return LLMParseResult(transactions=[], warning="Couldn't understand that. Could you rephrase?")
+    except json.JSONDecodeError:
+        chat_response = raw_response.strip()
+        return LLMParseResult(transactions=[], warning=None, chat_response=chat_response)
 
-    transactions: list[TransactionCreate] = []
+    if not isinstance(data, dict) or "transactions" not in data:
+        chat_response = raw_response.strip()
+        return LLMParseResult(transactions=[], warning=None, chat_response=chat_response)
+
     for item in data.get("transactions", []):
         try:
             transactions.append(TransactionCreate(**item))
         except ValidationError as exc:
             logger.warning("Dropping invalid transaction from LLM output: {}", exc)
 
-    return LLMParseResult(transactions=transactions, warning=data.get("warning"))
+    return LLMParseResult(transactions=transactions, warning=data.get("warning"), chat_response=None)
 
 
 async def parse_receipt_text(ocr_text: str, today: Date | None = None) -> LLMParseResult:

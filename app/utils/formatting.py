@@ -54,6 +54,8 @@ def render_confirmation_card(tx: TransactionCreate, currency: str = "IDR", pendi
         lines += ["", "🏦 *Account*", tx.account]
     if tx.notes:
         lines += ["", "📝 *Notes*", tx.notes]
+    if tx.tags:
+        lines += ["", "🏷️ *Tags*", ", ".join(tx.tags)]
     if tx.confidence < 0.6:
         lines += ["", f"⚠️ _Low confidence ({tx.confidence:.0%}) — please double-check._"]
     return "\n".join(lines)

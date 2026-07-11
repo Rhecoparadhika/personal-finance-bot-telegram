@@ -19,9 +19,9 @@ has to guess it.
 from __future__ import annotations
 
 from datetime import date as Date
-from datetime import datetime
 from datetime import time as Time
 
+from app.utils.time import current_time
 from pydantic import BaseModel, Field, field_validator
 
 from app.config.categories import ALL_CATEGORIES, PAYMENT_METHODS, derive_transaction_fields
@@ -32,7 +32,7 @@ class TransactionCreate(BaseModel):
     """Structured output contract for the LLM parser."""
 
     date: Date
-    time: Time = Field(default_factory=lambda: datetime.now().time().replace(microsecond=0))
+    time: Time = Field(default_factory=current_time)
     type: TransactionType
     category: str
     amount: float = Field(gt=0)
@@ -129,3 +129,4 @@ class LLMParseResult(BaseModel):
 
     transactions: list[TransactionCreate] = Field(default_factory=list)
     warning: str | None = None
+    chat_response: str | None = None

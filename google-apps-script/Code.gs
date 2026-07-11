@@ -34,6 +34,19 @@ var TX_COL = {
 };
 var TX_HEADER_ROW = 2;
 var TX_DATA_START_ROW = 3;
+var SCRIPT_TIMEZONE = 'Asia/Jakarta';
+
+function parseDateOnly_(dateStr) {
+  if (!dateStr) return null;
+  return new Date(String(dateStr).trim() + 'T00:00:00+07:00');
+}
+
+function parseTimeOnly_(timeStr) {
+  if (!timeStr) return null;
+  var normalized = String(timeStr).trim();
+  if (normalized.length === 5) normalized += ':00';
+  return new Date('1970-01-01T' + normalized + '+07:00');
+}
 
 // 'Budget Planner' — fixed category rows the template ships with.
 // { rowLabel: { row, section } }
@@ -168,11 +181,30 @@ function nextTransactionId_(sheet) {
   return 'TRX' + padded;
 }
 
+// The first data row to write into next. We anchor on column A (the TRX id)
+// instead of sheet.appendRow()/getLastRow(): the template ships with
+// formulas/content far down the sheet, and appendRow would land the new row
+// at the very bottom (row 900+) instead of right under the last transaction.
+function nextTxRow_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < TX_DATA_START_ROW) return TX_DATA_START_ROW;
+  var ids = sheet.getRange(TX_DATA_START_ROW, TX_COL.ID, lastRow - TX_DATA_START_ROW + 1, 1).getValues();
+  var lastTrx = TX_DATA_START_ROW - 1;
+  for (var i = 0; i < ids.length; i++) {
+    if (/^TRX\d+$/.test(String(ids[i][0]).trim())) lastTrx = TX_DATA_START_ROW + i;
+  }
+  return lastTrx + 1;
+}
+
+function writeTxRow_(sheet, row, id, p) {
+  sheet.getRange(row, 1, 1, TX_COL.TAGS).setValues([rowFromPayload_(id, p)]);
+}
+
 function rowFromPayload_(id, p) {
   var row = [];
   row[TX_COL.ID - 1] = id;
-  row[TX_COL.DATE - 1] = p.date;
-  row[TX_COL.TIME - 1] = p.time;
+  row[TX_COL.DATE - 1] = p.date instanceof Date ? p.date : parseDateOnly_(p.date);
+  row[TX_COL.TIME - 1] = p.time instanceof Date ? p.time : parseTimeOnly_(p.time);
   row[TX_COL.TYPE - 1] = p.type;
   row[TX_COL.CATEGORY - 1] = p.category;
   row[TX_COL.NEED_WANT_GOAL - 1] = p.needWantGoal || '-';
@@ -189,7 +221,8 @@ function rowFromPayload_(id, p) {
 function addTransactionRow(payload) {
   var sheet = txSheet_();
   var id = nextTransactionId_(sheet);
-  sheet.appendRow(rowFromPayload_(id, payload));
+  writeTxRow_(sheet, nextTxRow_(sheet), id, payload);
+  SpreadsheetApp.flush();
   var alert = null;
   if (payload.type === 'Expense' || payload.type === 'Transfer') {
     alert = applyBudgetDelta_(payload.category, Number(payload.amount) || 0);
@@ -201,10 +234,13 @@ function addTransactionRows(transactions) {
   var sheet = txSheet_();
   var ids = [];
   var alerts = [];
+  var row = nextTxRow_(sheet);
   for (var i = 0; i < transactions.length; i++) {
     var p = transactions[i];
     var id = nextTransactionId_(sheet); // recompute each time so a batch never collides
-    sheet.appendRow(rowFromPayload_(id, p));
+    writeTxRow_(sheet, row, id, p);
+    SpreadsheetApp.flush(); // so nextTransactionId_ sees this row on the next loop
+    row++;
     ids.push(id);
     if (p.type === 'Expense' || p.type === 'Transfer') {
       alerts.push(applyBudgetDelta_(p.category, Number(p.amount) || 0));
@@ -305,8 +341,8 @@ function getTransactions(filters) {
   if (lastRow < TX_DATA_START_ROW) return { transactions: out };
 
   var values = sheet.getRange(TX_DATA_START_ROW, 1, lastRow - TX_DATA_START_ROW + 1, TX_COL.TAGS).getValues();
-  var dateFrom = filters.dateFrom ? new Date(filters.dateFrom) : null;
-  var dateTo = filters.dateTo ? new Date(filters.dateTo) : null;
+  var dateFrom = filters.dateFrom ? parseDateOnly_(filters.dateFrom) : null;
+  var dateTo = filters.dateTo ? new Date(String(filters.dateTo).trim() + 'T23:59:59.999+07:00') : null;
 
   for (var i = 0; i < values.length; i++) {
     var v = values[i];
@@ -314,7 +350,9 @@ function getTransactions(filters) {
 
     var txDate = v[TX_COL.DATE - 1] instanceof Date ? v[TX_COL.DATE - 1] : new Date(v[TX_COL.DATE - 1]);
     if (dateFrom && txDate < dateFrom) continue;
-    if (dateTo && txDate > new Date(dateTo.getTime() + 24 * 60 * 60 * 1000 - 1)) continue;
+    // dateTo is already end-of-day (23:59:59.999) for the requested date —
+    // comparing directly, no extra day offset needed.
+    if (dateTo && txDate > dateTo) continue;
     if (filters.category && v[TX_COL.CATEGORY - 1] !== filters.category) continue;
     if (filters.type && v[TX_COL.TYPE - 1] !== filters.type) continue;
 
@@ -343,8 +381,8 @@ function getBalance(year, month) {
   for (var i = 0; i < all.length; i++) {
     var t = all[i];
     if (year && month) {
-      var d = new Date(t.date);
-      if (d.getFullYear() !== Number(year) || d.getMonth() + 1 !== Number(month)) continue;
+      var d = parseDateOnly_(t.date);
+      if (!d || d.getFullYear() !== Number(year) || d.getMonth() + 1 !== Number(month)) continue;
     }
     if (t.type === 'Income') income += Number(t.amount) || 0;
     else if (t.type === 'Expense') expense += Number(t.amount) || 0;
@@ -354,12 +392,12 @@ function getBalance(year, month) {
 }
 
 function formatDate_(value) {
-  if (value instanceof Date) return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  if (value instanceof Date) return Utilities.formatDate(value, SCRIPT_TIMEZONE, 'yyyy-MM-dd');
   return String(value);
 }
 
 function formatTime_(value) {
-  if (value instanceof Date) return Utilities.formatDate(value, Session.getScriptTimeZone(), 'HH:mm:ss');
+  if (value instanceof Date) return Utilities.formatDate(value, SCRIPT_TIMEZONE, 'HH:mm:ss');
   return String(value || '00:00:00');
 }
 
